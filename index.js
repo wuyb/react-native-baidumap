@@ -2,8 +2,7 @@
 
 import React from 'react';
 
-
-import ReactNative, {
+import {
     EdgeInsetsPropType,
     Image,
     NativeMethodsMixin,
@@ -14,6 +13,7 @@ import ReactNative, {
     UIManager,
     processColor,
     ColorPropType,
+    findNodeHandle
 } from 'react-native';
 
 import deprecatedPropType from 'react-native/Libraries/Utilities/deprecatedPropType';
@@ -36,11 +36,205 @@ export type MAAnnotationDragState = $Enum<{
 //         return <View></View>;
 //     }
 // }
-const BaiduMapView= React.createClass({
 
-  mixins: [NativeMethodsMixin],
+class BaiduMapView extends React.Component {
+  render() {
+    let children = [], {annotations, overlays, followUserLocation, userLocationViewParams, showsZoomControl} = this.props;
+    annotations = annotations && annotations.map((annotation: Object) => {
+      let {
+        id,
+        image,
+        tintColor,
+        view,
+        leftCalloutView,
+        rightCalloutView,
+      } = annotation;
 
-  propTypes: {
+      if (!view && image && tintColor) {
+        view = <Image
+          style={{
+            tintColor: processColor(tintColor),
+          }}
+          source={image}
+        />;
+        image = undefined;
+      }
+      if (view) {
+        if (image) {
+          console.warn('`image` and `view` both set on annotation. Image will be ignored.');
+        }
+        var viewIndex = children.length;
+        children.push(React.cloneElement(view, {
+          style: [styles.annotationView, view.props.style || {}]
+        }));
+      }
+      if (leftCalloutView) {
+        var leftCalloutViewIndex = children.length;
+        children.push(React.cloneElement(leftCalloutView, {
+          style: [styles.calloutView, leftCalloutView.props.style || {}]
+        }));
+      }
+      if (rightCalloutView) {
+        var rightCalloutViewIndex = children.length;
+        children.push(React.cloneElement(rightCalloutView, {
+          style: [styles.calloutView, rightCalloutView.props.style || {}]
+        }));
+      }
+
+      let result = {
+        ...annotation,
+        tintColor: tintColor && processColor(tintColor),
+        image,
+        viewIndex,
+        leftCalloutViewIndex,
+        rightCalloutViewIndex,
+        view: undefined,
+        leftCalloutView: undefined,
+        rightCalloutView: undefined,
+      };
+      result.id = id || encodeURIComponent(JSON.stringify(result));
+      result.image = image && resolveAssetSource(image);
+      return result;
+    });
+    overlays = overlays && overlays.map((overlay: Object) => {
+      let {id, fillColor, strokeColor} = overlay;
+      let result = {
+        ...overlay,
+        strokeColor: strokeColor && processColor(strokeColor),
+        fillColor: fillColor && processColor(fillColor),
+      };
+      result.id = id || encodeURIComponent(JSON.stringify(result));
+      return result;
+    });
+
+    const findByAnnotationId = (annotationId: string) => {
+      if (!annotations) {
+        return null;
+      }
+      for (let i = 0, l = annotations.length; i < l; i++) {
+        if (annotations[i].id === annotationId) {
+          return annotations[i];
+        }
+      }
+      return null;
+    };
+
+    // TODO: these should be separate events, to reduce bridge traffic
+    let onPress, onAnnotationDragStateChange, onAnnotationFocus, onAnnotationBlur;
+    if (annotations) {
+      onPress = (event: Event) => {
+        if (event.nativeEvent.action === 'annotation-click') {
+          // TODO: Remove deprecated onAnnotationPress API call later.
+          this.props.onAnnotationPress &&
+            this.props.onAnnotationPress(event.nativeEvent.annotation);
+        } else if (event.nativeEvent.action === 'callout-click') {
+          const annotation = findByAnnotationId(event.nativeEvent.annotationId);
+          if (annotation) {
+            // Pass the right function
+            if (event.nativeEvent.side === 'left' && annotation.onLeftCalloutPress) {
+              annotation.onLeftCalloutPress(event.nativeEvent);
+            } else if (event.nativeEvent.side === 'right' && annotation.onRightCalloutPress) {
+              annotation.onRightCalloutPress(event.nativeEvent);
+            }
+          }
+        }
+      };
+      onAnnotationDragStateChange = (event: Event) => {
+        const annotation = findByAnnotationId(event.nativeEvent.annotationId);
+        if (annotation) {
+          // Update location
+          annotation.latitude = event.nativeEvent.latitude;
+          annotation.longitude = event.nativeEvent.longitude;
+          // Call callback
+          annotation.onDragStateChange &&
+            annotation.onDragStateChange(event.nativeEvent);
+        }
+      };
+      onAnnotationFocus = (event: Event) => {
+        const annotation = findByAnnotationId(event.nativeEvent.annotationId);
+        if (annotation && annotation.onFocus) {
+          annotation.onFocus(event.nativeEvent);
+        }
+      };
+      onAnnotationBlur = (event: Event) => {
+        const annotation = findByAnnotationId(event.nativeEvent.annotationId);
+        if (annotation && annotation.onBlur) {
+          annotation.onBlur(event.nativeEvent);
+        }
+      };
+    }
+
+    // TODO: these should be separate events, to reduce bridge traffic
+    if (this.props.onRegionChange || this.props.onRegionChangeComplete) {
+      var onChange = (event: Event) => {
+        if (event.nativeEvent.continuous) {
+          this.props.onRegionChange &&
+            this.props.onRegionChange(event.nativeEvent.region);
+        } else {
+          this.props.onRegionChangeComplete &&
+            this.props.onRegionChangeComplete(event.nativeEvent.region);
+        }
+      };
+    }
+
+    // followUserLocation defaults to true if showUserLocation is set
+    if (followUserLocation === undefined) {
+      followUserLocation = this.props.showUserLocation;
+    }
+
+    if (!!userLocationViewParams) {
+        let {accuracyCircleFillColor, accuracyCircleStrokeColor, image} = userLocationViewParams;
+        accuracyCircleFillColor = accuracyCircleFillColor && processColor(accuracyCircleFillColor);
+        accuracyCircleStrokeColor = accuracyCircleStrokeColor && processColor(accuracyCircleStrokeColor);
+        userLocationViewParams.accuracyCircleFillColor = accuracyCircleFillColor;
+        userLocationViewParams.accuracyCircleStrokeColor = accuracyCircleStrokeColor;
+
+        image = image && resolveAssetSource(image);
+        userLocationViewParams.image = image;
+    }
+
+    if (showsZoomControl === undefined) {
+        showsZoomControl = false;
+    }
+
+    return (
+      <RCTBaiduMap
+          {...this.props}
+          ref="baiduMap"
+          annotations={annotations}
+          children={children}
+          followUserLocation={followUserLocation}
+          showsZoomControl={showsZoomControl}
+          overlays={overlays}
+          onPress={onPress}
+          onChange={onChange}
+          onAnnotationDragStateChange={onAnnotationDragStateChange}
+          onAnnotationFocus={onAnnotationFocus}
+          onAnnotationBlur={onAnnotationBlur}
+          userLocationViewParams={userLocationViewParams}
+      />
+    );
+  }
+
+  zoomToLocs(locs) {
+      if (!Array.isArray(locs) && Object.prototype.toString.call(locs) === '[object Object]') {
+          locs = [locs];
+      }
+      if (!Array.isArray(locs)) {
+          return;
+      }
+      UIManager.dispatchViewManagerCommand(
+          findNodeHandle(this.refs["baiduMap"]),
+          UIManager.RCTBaiduMap.Commands.zoomToLocs,
+          [locs]
+      );
+  }
+
+}
+
+BaiduMapView.mixins = [NativeMethodsMixin];
+
+BaiduMapView.propTypes = {
     ...View.propTypes,
     /**
      * Used to style and layout the `MapView`.  See `StyleSheet.js` and
@@ -337,201 +531,7 @@ const BaiduMapView= React.createClass({
      * @platform android
      */
     active: React.PropTypes.bool,
-  },
-
-
-  render: function() {
-    let children = [], {annotations, overlays, followUserLocation, userLocationViewParams, showsZoomControl} = this.props;
-    annotations = annotations && annotations.map((annotation: Object) => {
-      let {
-        id,
-        image,
-        tintColor,
-        view,
-        leftCalloutView,
-        rightCalloutView,
-      } = annotation;
-
-      if (!view && image && tintColor) {
-        view = <Image
-          style={{
-            tintColor: processColor(tintColor),
-          }}
-          source={image}
-        />;
-        image = undefined;
-      }
-      if (view) {
-        if (image) {
-          console.warn('`image` and `view` both set on annotation. Image will be ignored.');
-        }
-        var viewIndex = children.length;
-        children.push(React.cloneElement(view, {
-          style: [styles.annotationView, view.props.style || {}]
-        }));
-      }
-      if (leftCalloutView) {
-        var leftCalloutViewIndex = children.length;
-        children.push(React.cloneElement(leftCalloutView, {
-          style: [styles.calloutView, leftCalloutView.props.style || {}]
-        }));
-      }
-      if (rightCalloutView) {
-        var rightCalloutViewIndex = children.length;
-        children.push(React.cloneElement(rightCalloutView, {
-          style: [styles.calloutView, rightCalloutView.props.style || {}]
-        }));
-      }
-
-      let result = {
-        ...annotation,
-        tintColor: tintColor && processColor(tintColor),
-        image,
-        viewIndex,
-        leftCalloutViewIndex,
-        rightCalloutViewIndex,
-        view: undefined,
-        leftCalloutView: undefined,
-        rightCalloutView: undefined,
-      };
-      result.id = id || encodeURIComponent(JSON.stringify(result));
-      result.image = image && resolveAssetSource(image);
-      return result;
-    });
-    overlays = overlays && overlays.map((overlay: Object) => {
-      let {id, fillColor, strokeColor} = overlay;
-      let result = {
-        ...overlay,
-        strokeColor: strokeColor && processColor(strokeColor),
-        fillColor: fillColor && processColor(fillColor),
-      };
-      result.id = id || encodeURIComponent(JSON.stringify(result));
-      return result;
-    });
-
-    const findByAnnotationId = (annotationId: string) => {
-      if (!annotations) {
-        return null;
-      }
-      for (let i = 0, l = annotations.length; i < l; i++) {
-        if (annotations[i].id === annotationId) {
-          return annotations[i];
-        }
-      }
-      return null;
-    };
-
-    // TODO: these should be separate events, to reduce bridge traffic
-    let onPress, onAnnotationDragStateChange, onAnnotationFocus, onAnnotationBlur;
-    if (annotations) {
-      onPress = (event: Event) => {
-        if (event.nativeEvent.action === 'annotation-click') {
-          // TODO: Remove deprecated onAnnotationPress API call later.
-          this.props.onAnnotationPress &&
-            this.props.onAnnotationPress(event.nativeEvent.annotation);
-        } else if (event.nativeEvent.action === 'callout-click') {
-          const annotation = findByAnnotationId(event.nativeEvent.annotationId);
-          if (annotation) {
-            // Pass the right function
-            if (event.nativeEvent.side === 'left' && annotation.onLeftCalloutPress) {
-              annotation.onLeftCalloutPress(event.nativeEvent);
-            } else if (event.nativeEvent.side === 'right' && annotation.onRightCalloutPress) {
-              annotation.onRightCalloutPress(event.nativeEvent);
-            }
-          }
-        }
-      };
-      onAnnotationDragStateChange = (event: Event) => {
-        const annotation = findByAnnotationId(event.nativeEvent.annotationId);
-        if (annotation) {
-          // Update location
-          annotation.latitude = event.nativeEvent.latitude;
-          annotation.longitude = event.nativeEvent.longitude;
-          // Call callback
-          annotation.onDragStateChange &&
-            annotation.onDragStateChange(event.nativeEvent);
-        }
-      };
-      onAnnotationFocus = (event: Event) => {
-        const annotation = findByAnnotationId(event.nativeEvent.annotationId);
-        if (annotation && annotation.onFocus) {
-          annotation.onFocus(event.nativeEvent);
-        }
-      };
-      onAnnotationBlur = (event: Event) => {
-        const annotation = findByAnnotationId(event.nativeEvent.annotationId);
-        if (annotation && annotation.onBlur) {
-          annotation.onBlur(event.nativeEvent);
-        }
-      };
-    }
-
-    // TODO: these should be separate events, to reduce bridge traffic
-    if (this.props.onRegionChange || this.props.onRegionChangeComplete) {
-      var onChange = (event: Event) => {
-        if (event.nativeEvent.continuous) {
-          this.props.onRegionChange &&
-            this.props.onRegionChange(event.nativeEvent.region);
-        } else {
-          this.props.onRegionChangeComplete &&
-            this.props.onRegionChangeComplete(event.nativeEvent.region);
-        }
-      };
-    }
-
-    // followUserLocation defaults to true if showUserLocation is set
-    if (followUserLocation === undefined) {
-      followUserLocation = this.props.showUserLocation;
-    }
-
-    if (!!userLocationViewParams) {
-        let {accuracyCircleFillColor, accuracyCircleStrokeColor, image} = userLocationViewParams;
-        accuracyCircleFillColor = accuracyCircleFillColor && processColor(accuracyCircleFillColor);
-        accuracyCircleStrokeColor = accuracyCircleStrokeColor && processColor(accuracyCircleStrokeColor);
-        userLocationViewParams.accuracyCircleFillColor = accuracyCircleFillColor;
-        userLocationViewParams.accuracyCircleStrokeColor = accuracyCircleStrokeColor;
-
-        image = image && resolveAssetSource(image);
-        userLocationViewParams.image = image;
-    }
-
-    if (showsZoomControl === undefined) {
-        showsZoomControl = false;
-    }
-
-    return (
-      <RCTBaiduMap
-          {...this.props}
-          ref="baiduMap"
-          annotations={annotations}
-          children={children}
-          followUserLocation={followUserLocation}
-          showsZoomControl={showsZoomControl}
-          overlays={overlays}
-          onPress={onPress}
-          onChange={onChange}
-          onAnnotationDragStateChange={onAnnotationDragStateChange}
-          onAnnotationFocus={onAnnotationFocus}
-          onAnnotationBlur={onAnnotationBlur}
-          userLocationViewParams={userLocationViewParams}
-      />
-    );
-  },
-
-  zoomToLocs(locs) {
-      if (!Array.isArray(locs) && Object.prototype.toString.call(locs) === '[object Object]') {
-          locs = [locs];
-      }
-      if (!Array.isArray(locs)) {
-          return;
-      }
-      UIManager.dispatchViewManagerCommand(
-          ReactNative.findNodeHandle(this.refs["baiduMap"]),
-          UIManager.RCTBaiduMap.Commands.zoomToLocs,
-          [locs]
-      );
-  },
-});
+  }
 
 const styles = StyleSheet.create({
   annotationView: {
@@ -568,4 +568,4 @@ const RCTBaiduMap = requireNativeComponent('RCTBaiduMap', BaiduMapView, {
   }
 });
 
-module.exports = BaiduMapView;
+export default BaiduMapView;
